@@ -21,4 +21,4 @@ RUN yarn build
 EXPOSE 3000
 
 # 6. Build хийсэн кодоо ажиллуулах (Node-оор шууд ажиллуулах нь тогтвортой байдаг)
-CMD ["node", "dist/main"]
+CMD ["yarn", "start:prod"]
