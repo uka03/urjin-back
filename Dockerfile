@@ -2,12 +2,16 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# optional (хэрвээ bcrypt гэх мэт native dependency ашиглавал хэрэг болно)
-# RUN apk add --no-cache libc6-compat
-
 COPY package.json yarn.lock ./
-RUN yarn install
+RUN yarn install --frozen-lockfile
+
+# Шаардлагатай бол build хийх (Жишээ нь NestJS бол)
+# RUN yarn build 
+
 RUN apk add --no-cache ca-certificates
 COPY . .
 
 EXPOSE 3000
+
+# Апп-ыг ажиллуулах команд (package.json дахь нэртэй ижил байна)
+CMD ["yarn", "start"]
