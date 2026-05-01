@@ -1,0 +1,35 @@
+version: '3.9'
+
+services:
+  api:
+    build: .
+    container_name: nest-api
+    working_dir: /app
+    ports:
+      - '3000:3000'
+      - '5555:5555'
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+    command: sh -c "yarn install && yarn prisma generate && yarn start:dev"
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+
+  postgres:
+    image: postgres:16
+    container_name: postgres-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mydb
+    ports:
+      - '5432:5432'
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+  node_modules:

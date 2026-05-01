@@ -1,0 +1,187 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+///PRODUCTS
+
+model Product{
+  id    String   @id @default(uuid())
+  name String
+  itemCode String @unique
+  unit String
+  stock Float @default(0)
+  images String[]
+  minStock Float
+  categoryId String
+  category Category @relation(fields: [categoryId], references: [id])
+  createdAt DateTime @default(now())
+  orderItems OrderItem[]
+}
+
+model Category{
+  id String @id @default(uuid())
+  name String
+  products Product[]
+  createdAt DateTime @default(now())
+}
+
+
+// //////////////////////////////////////
+// // ORDER
+// //////////////////////////////////////
+
+model Order {
+  id          String       @id @default(uuid())
+  status      OrderStatus  @default(PENDING)
+  deadline    DateTime?
+  receiver    String
+  createdAt   DateTime     @default(now())
+
+  items       OrderItem[]
+}
+
+// //////////////////////////////////////
+// // ORDER ITEM
+// //////////////////////////////////////
+
+model OrderItem {
+  id         String   @id @default(uuid())
+  orderId    String
+  productId  String
+  quantity   Int
+  height   Float?
+  width   Float?
+  description String?
+
+  order      Order    @relation(fields: [orderId], references: [id])
+  product    Product  @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+}
+
+
+
+//////////////////////////////////////
+// ENUMS
+// //////////////////////////////////////
+
+// enum StockMovementType {
+//   IN
+//   OUT
+//   ADJUSTMENT
+// }
+
+// enum ReferenceType {
+//   ORDER
+//   PURCHASE
+//   MANUAL
+// }
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  CANCELLED
+}
+
+// //////////////////////////////////////
+// // USER
+// //////////////////////////////////////
+
+// model User {
+//   id        String   @id @default(uuid())
+//   name      String
+//   role      String
+//   createdAt DateTime @default(now())
+
+//   orders    Order[]  @relation("AssignedOrders")
+// }
+
+// //////////////////////////////////////
+// // MATERIAL
+// //////////////////////////////////////
+
+// model Material {
+//   id          String   @id @default(uuid())
+//   name        String
+//   unit        String   // ширхэг, метр
+//   minStock    Float
+//   isActive    Boolean  @default(true)
+
+//   stock       Stock?
+//   movements   StockMovement[]
+//   productUses ProductMaterial[]
+
+//   createdAt   DateTime @default(now())
+// }
+
+// //////////////////////////////////////
+// // STOCK (current snapshot)
+// //////////////////////////////////////
+
+// model Stock {
+//   id          String   @id @default(uuid())
+//   materialId  String   @unique
+//   current     Float    @default(0)
+
+//   material    Material @relation(fields: [materialId], references: [id])
+// }
+
+// //////////////////////////////////////
+// // STOCK MOVEMENT (🔥 хамгийн чухал)
+// //////////////////////////////////////
+
+// model StockMovement {
+//   id             String              @id @default(uuid())
+//   materialId     String
+//   type           StockMovementType
+//   quantity       Float
+
+//   referenceType  ReferenceType
+//   referenceId    String?
+
+//   note           String?
+
+//   createdAt      DateTime @default(now())
+
+//   material       Material @relation(fields: [materialId], references: [id])
+
+//   @@index([materialId])
+//   @@index([referenceType, referenceId])
+// }
+
+// //////////////////////////////////////
+// // PRODUCT
+// //////////////////////////////////////
+
+// model Product {
+//   id        String   @id @default(uuid())
+//   name      String
+
+//   materials ProductMaterial[]
+//   items     OrderItem[]
+
+//   createdAt DateTime @default(now())
+// }
+
+// //////////////////////////////////////
+// // PRODUCT MATERIAL (🔥 логикийн зүрх)
+// //////////////////////////////////////
+
+// model ProductMaterial {
+//   id           String   @id @default(uuid())
+//   productId    String
+//   materialId   String
+//   quantity     Float    // 1 бүтээгдэхүүнд орох хэмжээ
+
+//   product      Product  @relation(fields: [productId], references: [id])
+//   material     Material @relation(fields: [materialId], references: [id])
+
+//   @@unique([productId, materialId])
+// }
+
