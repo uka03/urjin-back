@@ -2,22 +2,23 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# 1. Зөвхөн lock файлыг эхэлж хуулж суулгах нь кэш ашиглахад тустай
 COPY package.json yarn.lock ./
 
-# 1. Dependency-уудаа суулгах
-RUN yarn install
+# 2. Dependency-уудаа суулгах (Yarn ашиглан)
+RUN yarn install --frozen-lockfile
 
-# 2. Prisma-ийн схемийг хуулж, Client-ийг үүсгэх (ЭНЭ ХЭСЭГ МАШ ЧУХАЛ)
+# 3. Prisma схемийг хуулж, Client-ийг үүсгэх (ЭНЭ ХЭСЭГТ АЛДАА ГАРААД БАЙГАА)
 COPY prisma ./prisma/
-RUN npx prisma generate
+RUN yarn prisma generate
 
-# 3. Бусад бүх кодоо хуулах
+# 4. Бүх кодоо хуулах
 COPY . .
 
-# 4. TypeScript-ийг build хийх (NestJS ашиглаж байгаа тул)
+# 5. NestJS build хийх
 RUN yarn build
 
 EXPOSE 3000
 
-# 5. Build хийсэн кодоо ажиллуулах
+# 6. Build хийсэн кодоо ажиллуулах (Node-оор шууд ажиллуулах нь тогтвортой байдаг)
 CMD ["node", "dist/main"]
