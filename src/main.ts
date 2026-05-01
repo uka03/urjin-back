@@ -16,7 +16,7 @@ async function bootstrap() {
       'http://127.0.0.1:3001',
       'http://localhost:5050',
       'http://127.0.0.1:5050',
-      'https://urjin.vercel.app',
+      'https://urjin-zangi.vercel.app',
     ],
     credentials: true,
   });
