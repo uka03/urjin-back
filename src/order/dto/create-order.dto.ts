@@ -9,24 +9,24 @@ export enum OrderStatus {
 
 export class CreateOrderDto {
   @IsEnum(OrderStatus)
-  status: OrderStatus;
+  status!: OrderStatus;
 
   @IsDate()
   deadline?: Date;
 
   @IsString()
-  receiver: string;
+  receiver!: string;
 }
 
 export class OrderItemDto {
   @IsString()
-  orderId: string;
+  orderId!: string;
 
   @IsString()
-  productId: string;
+  productId!: string;
 
   @IsInt()
-  quantity: number;
+  quantity!: number;
 
   @IsInt()
   @IsOptional()

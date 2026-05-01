@@ -5,5 +5,5 @@ export class IdParamDto {
   @Matches(/^c[a-z0-9]+$/, {
     message: 'Invalid CUID format',
   })
-  id: string;
+  id!: string;
 }

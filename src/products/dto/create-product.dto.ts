@@ -2,24 +2,24 @@ import { IsArray, IsInt, IsNumber, IsString } from 'class-validator';
 
 export class CreateProductDto {
   @IsString()
-  name: string;
+  name!: string;
 
   @IsString()
-  itemCode: string;
+  itemCode!: string;
 
   @IsString()
-  unit: string;
+  unit!: string;
 
   @IsNumber()
-  stock: number;
+  stock!: number;
 
   @IsNumber()
-  minStock: number;
+  minStock!: number;
 
   @IsString()
-  categoryId: string;
+  categoryId!: string;
 
   @IsArray()
   @IsString({ each: true })
-  images: string[];
+  images!: string[];
 }
