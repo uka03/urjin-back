@@ -1,5 +1,7 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import {
+  DeleteObjectCommand,
+  GetObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -74,11 +76,9 @@ export class FilesService {
           Body: file.buffer,
           ContentType: file.mimetype,
           ContentLength: file.size,
-          CacheControl: `public, max-age=${oneDaySeconds}, immutable`,
+          CacheControl: `public, max-age=${oneDaySeconds}, immutable, no-transform`,
           Metadata: {
-            originalName: Buffer.from(file.originalname, 'latin1').toString(
-              'utf8',
-            ),
+            originalName: this.toUtf8FileName(file.originalname),
             expiresAt: expiresAt.toISOString(),
           },
         }),
@@ -86,6 +86,7 @@ export class FilesService {
 
       return {
         key,
+        fileName: this.toUtf8FileName(file.originalname),
         url: `${config.publicUrl}/${key}`,
         expiresAt: expiresAt.toISOString(),
         ttlSeconds: oneDaySeconds,
@@ -100,11 +101,97 @@ export class FilesService {
     }
   }
 
+  async download(key: string) {
+    this.assertValidKey(key);
+
+    try {
+      const config = this.getConfig();
+      const response = await this.getClient(config).send(
+        new GetObjectCommand({
+          Bucket: config.bucket,
+          Key: key,
+        }),
+      );
+
+      if (!response.Body) {
+        throw new AppException(
+          'File not found',
+          HttpStatus.NOT_FOUND,
+          'FILE_NOT_FOUND',
+        );
+      }
+
+      const bytes = await response.Body.transformToByteArray();
+      const buffer = Buffer.from(bytes);
+      const fileName =
+        response.Metadata?.originalname ??
+        response.Metadata?.originalName ??
+        this.getFileNameFromKey(key);
+
+      return {
+        buffer,
+        contentType: response.ContentType ?? 'application/octet-stream',
+        contentLength: String(response.ContentLength ?? buffer.length),
+        contentDisposition: this.createAttachmentHeader(fileName),
+      };
+    } catch (error) {
+      if (error instanceof AppException) {
+        throw error;
+      }
+
+      console.log('Error downloading file from R2:', error);
+      throw new AppException(
+        'Failed to download file',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'FILE_DOWNLOAD_FAILED',
+      );
+    }
+  }
+
+  async remove(key: string) {
+    this.assertValidKey(key);
+
+    const config = this.getConfig();
+    await this.getClient(config).send(
+      new DeleteObjectCommand({
+        Bucket: config.bucket,
+        Key: key,
+      }),
+    );
+
+    return { key };
+  }
+
   private createObjectKey(originalName: string) {
     const extension = extname(originalName).toLowerCase();
     const datePrefix = new Date().toISOString().slice(0, 10);
 
     return `uploads/${datePrefix}/${randomUUID()}${extension}`;
+  }
+
+  private getFileNameFromKey(key: string) {
+    return key.split('/').pop() ?? 'download';
+  }
+
+  private assertValidKey(key: string) {
+    if (!key || !key.startsWith('uploads/') || key.includes('..')) {
+      throw new AppException(
+        'Invalid file key',
+        HttpStatus.BAD_REQUEST,
+        'INVALID_FILE_KEY',
+      );
+    }
+  }
+
+  private toUtf8FileName(fileName: string) {
+    return Buffer.from(fileName, 'latin1').toString('utf8');
+  }
+
+  private createAttachmentHeader(fileName: string) {
+    const cleanFileName = fileName.replace(/["\r\n]/g, '').trim() || 'download';
+    const asciiName = cleanFileName.replace(/[^\x20-\x7E]/g, '_');
+
+    return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(cleanFileName)}`;
   }
 
   private getClient(config: R2Config) {

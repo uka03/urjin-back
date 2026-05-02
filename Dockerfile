@@ -8,8 +8,9 @@ COPY package.json yarn.lock ./
 # 2. Dependency-уудаа суулгах (Yarn ашиглан)
 RUN yarn install --frozen-lockfile
 
-# 3. Prisma схемийг хуулж, Client-ийг үүсгэх (ЭНЭ ХЭСЭГТ АЛДАА ГАРААД БАЙГАА)
+# 3. Prisma схемийг хуулж, Client-ийг үүсгэх
 COPY prisma ./prisma/
+COPY prisma.config.ts ./
 RUN yarn prisma generate
 
 # 4. Бүх кодоо хуулах

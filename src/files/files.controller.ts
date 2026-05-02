@@ -1,13 +1,18 @@
 import {
   Controller,
+  Delete,
   Get,
   HttpStatus,
   MaxFileSizeValidator,
   ParseFilePipe,
   Post,
+  Query,
+  Res,
+  StreamableFile,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { FilesService } from './files.service';
 import { AppException } from '../common/exceptions/app.exception';
@@ -23,6 +28,28 @@ export class FilesController {
   @Get()
   findAll() {
     return this.filesService.findAll();
+  }
+
+  @Get('download')
+  async download(
+    @Query('key') key: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const file = await this.filesService.download(key);
+
+    res.set({
+      'Content-Type': file.contentType,
+      'Content-Length': file.contentLength,
+      'Content-Disposition': file.contentDisposition,
+      'Cache-Control': 'no-store, no-transform',
+    });
+
+    return new StreamableFile(file.buffer);
+  }
+
+  @Delete()
+  remove(@Query('key') key: string) {
+    return this.filesService.remove(key);
   }
 
   @Post()
