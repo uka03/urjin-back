@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
@@ -16,6 +17,7 @@ import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { FilesService } from './files.service';
 import { AppException } from '../common/exceptions/app.exception';
+import { DownloadFilesDto } from './dto/download-files.dto';
 
 const maxUploadBytes = Number(
   process.env.FILE_UPLOAD_MAX_BYTES ?? 25 * 1024 * 1024,
@@ -47,6 +49,23 @@ export class FilesController {
     return new StreamableFile(file.buffer);
   }
 
+  @Post('download')
+  async downloadMany(
+    @Body() dto: DownloadFilesDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const file = await this.filesService.downloadManyZip(dto.files);
+
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Length': String(file.buffer.length),
+      'Content-Disposition': file.contentDisposition,
+      'Cache-Control': 'no-store, no-transform',
+    });
+
+    return new StreamableFile(file.buffer);
+  }
+
   @Delete()
   remove(@Query('key') key: string) {
     return this.filesService.remove(key);
@@ -55,6 +74,9 @@ export class FilesController {
   @Post()
   @UseInterceptors(FileInterceptor('file'))
   upload(
+    @Body('deviceId') deviceId: string | undefined,
+    @Body('deviceName') deviceName: string | undefined,
+    @Body('batchId') batchId: string | undefined,
     @UploadedFile(
       new ParseFilePipe({
         validators: [new MaxFileSizeValidator({ maxSize: maxUploadBytes })],
@@ -70,6 +92,10 @@ export class FilesController {
       );
     }
 
-    return this.filesService.upload(file);
+    return this.filesService.upload(file, {
+      deviceId,
+      deviceName,
+      batchId,
+    });
   }
 }

@@ -2,6 +2,7 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -9,6 +10,7 @@ import {
 import { randomUUID } from 'crypto';
 import { extname } from 'path';
 import { AppException } from '../common/exceptions/app.exception';
+import { DownloadFileEntryDto } from './dto/download-files.dto';
 
 const oneDaySeconds = 24 * 60 * 60;
 
@@ -18,6 +20,12 @@ type R2Config = {
   secretAccessKey: string;
   bucket: string;
   publicUrl: string;
+};
+
+type UploadMetadata = {
+  deviceId?: string;
+  deviceName?: string;
+  batchId?: string;
 };
 
 @Injectable()
@@ -34,33 +42,47 @@ export class FilesService {
       }),
     );
 
-    return (response.Contents ?? [])
-      .filter((object) => object.Key)
-      .map((object) => {
-        const uploadedAt = object.LastModified ?? new Date();
-        const expiresAt = new Date(uploadedAt.getTime() + oneDaySeconds * 1000);
-        const key = object.Key!;
+    const files = await Promise.all(
+      (response.Contents ?? [])
+        .filter((object) => object.Key)
+        .map(async (object) => {
+          const uploadedAt = object.LastModified ?? new Date();
+          const expiresAt = new Date(
+            uploadedAt.getTime() + oneDaySeconds * 1000,
+          );
+          const key = object.Key!;
+          const metadata = await this.getObjectMetadata(config, key);
 
-        return {
-          key,
-          fileName: key.split('/').pop() ?? key,
-          url: `${config.publicUrl}/${key}`,
-          size: object.Size ?? 0,
-          uploadedAt: uploadedAt.toISOString(),
-          expiresAt: expiresAt.toISOString(),
-          ttlSeconds: Math.max(
-            0,
-            Math.floor((expiresAt.getTime() - Date.now()) / 1000),
-          ),
-        };
-      })
-      .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
+          return {
+            key,
+            fileName:
+              metadata.originalname ??
+              metadata.originalName ??
+              key.split('/').pop() ??
+              key,
+            url: `${config.publicUrl}/${key}`,
+            size: object.Size ?? 0,
+            uploadedAt: uploadedAt.toISOString(),
+            expiresAt: expiresAt.toISOString(),
+            ttlSeconds: Math.max(
+              0,
+              Math.floor((expiresAt.getTime() - Date.now()) / 1000),
+            ),
+            deviceId: metadata.deviceid ?? metadata.deviceId,
+            deviceName: metadata.devicename ?? metadata.deviceName,
+            batchId: metadata.batchid ?? metadata.batchId,
+          };
+        }),
+    );
+
+    return files.sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
   }
 
-  async upload(file: Express.Multer.File) {
+  async upload(file: Express.Multer.File, metadata: UploadMetadata = {}) {
     try {
       const config = this.getConfig();
       const key = this.createObjectKey(file.originalname);
+      const fileName = this.toUtf8FileName(file.originalname);
       const expiresAt = new Date(Date.now() + oneDaySeconds * 1000);
       console.log('Uploading file to R2 with key:', key);
       console.log('File details:', {
@@ -78,18 +100,24 @@ export class FilesService {
           ContentLength: file.size,
           CacheControl: `public, max-age=${oneDaySeconds}, immutable, no-transform`,
           Metadata: {
-            originalName: this.toUtf8FileName(file.originalname),
+            originalName: fileName,
             expiresAt: expiresAt.toISOString(),
+            deviceId: this.cleanMetadataValue(metadata.deviceId),
+            deviceName: this.cleanMetadataValue(metadata.deviceName),
+            batchId: this.cleanMetadataValue(metadata.batchId),
           },
         }),
       );
 
       return {
         key,
-        fileName: this.toUtf8FileName(file.originalname),
+        fileName,
         url: `${config.publicUrl}/${key}`,
         expiresAt: expiresAt.toISOString(),
         ttlSeconds: oneDaySeconds,
+        deviceId: metadata.deviceId,
+        deviceName: metadata.deviceName,
+        batchId: metadata.batchId,
       };
     } catch (error) {
       console.log('Error uploading file to R2:', error);
@@ -130,6 +158,7 @@ export class FilesService {
 
       return {
         buffer,
+        fileName,
         contentType: response.ContentType ?? 'application/octet-stream',
         contentLength: String(response.ContentLength ?? buffer.length),
         contentDisposition: this.createAttachmentHeader(fileName),
@@ -146,6 +175,38 @@ export class FilesService {
         'FILE_DOWNLOAD_FAILED',
       );
     }
+  }
+
+  async downloadManyZip(files: DownloadFileEntryDto[]) {
+    if (!files.length) {
+      throw new AppException(
+        'At least one file is required',
+        HttpStatus.BAD_REQUEST,
+        'FILES_REQUIRED',
+      );
+    }
+
+    const entries = await Promise.all(
+      files.map(async (file) => {
+        this.assertValidKey(file.key);
+        const downloaded = await this.download(file.key);
+
+        return {
+          name: this.createZipEntryName(downloaded.fileName),
+          buffer: downloaded.buffer,
+        };
+      }),
+    );
+
+    const zipBuffer = this.createZipBuffer(this.uniquifyZipEntryNames(entries));
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+    return {
+      buffer: zipBuffer,
+      contentDisposition: this.createAttachmentHeader(
+        `uploaded-files-${timestamp}.zip`,
+      ),
+    };
   }
 
   async remove(key: string) {
@@ -173,6 +234,40 @@ export class FilesService {
     return key.split('/').pop() ?? 'download';
   }
 
+  private createZipEntryName(fileName: string) {
+    return (
+      fileName
+        .replace(/["\r\n]/g, '')
+        .replace(/[\\/]/g, '_')
+        .trim() || 'download'
+    );
+  }
+
+  private uniquifyZipEntryNames(
+    entries: Array<{ name: string; buffer: Buffer }>,
+  ) {
+    const seen = new Map<string, number>();
+
+    return entries.map((entry) => {
+      const count = seen.get(entry.name) ?? 0;
+      seen.set(entry.name, count + 1);
+
+      if (count === 0) {
+        return entry;
+      }
+
+      const extension = extname(entry.name);
+      const baseName = extension
+        ? entry.name.slice(0, -extension.length)
+        : entry.name;
+
+      return {
+        ...entry,
+        name: `${baseName} (${count + 1})${extension}`,
+      };
+    });
+  }
+
   private assertValidKey(key: string) {
     if (!key || !key.startsWith('uploads/') || key.includes('..')) {
       throw new AppException(
@@ -187,11 +282,88 @@ export class FilesService {
     return Buffer.from(fileName, 'latin1').toString('utf8');
   }
 
+  private cleanMetadataValue(value?: string) {
+    return value?.replace(/[\r\n]/g, '').trim() || '';
+  }
+
   private createAttachmentHeader(fileName: string) {
     const cleanFileName = fileName.replace(/["\r\n]/g, '').trim() || 'download';
     const asciiName = cleanFileName.replace(/[^\x20-\x7E]/g, '_');
 
     return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(cleanFileName)}`;
+  }
+
+  private createZipBuffer(entries: Array<{ name: string; buffer: Buffer }>) {
+    const localParts: Buffer[] = [];
+    const centralParts: Buffer[] = [];
+    let offset = 0;
+
+    for (const entry of entries) {
+      const nameBuffer = Buffer.from(entry.name, 'utf8');
+      const crc = this.crc32(entry.buffer);
+      const localHeader = Buffer.alloc(30);
+
+      localHeader.writeUInt32LE(0x04034b50, 0);
+      localHeader.writeUInt16LE(20, 4);
+      localHeader.writeUInt16LE(0x0800, 6);
+      localHeader.writeUInt16LE(0, 8);
+      localHeader.writeUInt16LE(0, 10);
+      localHeader.writeUInt16LE(0, 12);
+      localHeader.writeUInt32LE(crc, 14);
+      localHeader.writeUInt32LE(entry.buffer.length, 18);
+      localHeader.writeUInt32LE(entry.buffer.length, 22);
+      localHeader.writeUInt16LE(nameBuffer.length, 26);
+      localHeader.writeUInt16LE(0, 28);
+      localParts.push(localHeader, nameBuffer, entry.buffer);
+
+      const centralHeader = Buffer.alloc(46);
+      centralHeader.writeUInt32LE(0x02014b50, 0);
+      centralHeader.writeUInt16LE(20, 4);
+      centralHeader.writeUInt16LE(20, 6);
+      centralHeader.writeUInt16LE(0x0800, 8);
+      centralHeader.writeUInt16LE(0, 10);
+      centralHeader.writeUInt16LE(0, 12);
+      centralHeader.writeUInt16LE(0, 14);
+      centralHeader.writeUInt32LE(crc, 16);
+      centralHeader.writeUInt32LE(entry.buffer.length, 20);
+      centralHeader.writeUInt32LE(entry.buffer.length, 24);
+      centralHeader.writeUInt16LE(nameBuffer.length, 28);
+      centralHeader.writeUInt16LE(0, 30);
+      centralHeader.writeUInt16LE(0, 32);
+      centralHeader.writeUInt16LE(0, 34);
+      centralHeader.writeUInt16LE(0, 36);
+      centralHeader.writeUInt32LE(0, 38);
+      centralHeader.writeUInt32LE(offset, 42);
+      centralParts.push(centralHeader, nameBuffer);
+
+      offset += localHeader.length + nameBuffer.length + entry.buffer.length;
+    }
+
+    const centralDirectorySize = centralParts.reduce(
+      (total, part) => total + part.length,
+      0,
+    );
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(0, 4);
+    end.writeUInt16LE(0, 6);
+    end.writeUInt16LE(entries.length, 8);
+    end.writeUInt16LE(entries.length, 10);
+    end.writeUInt32LE(centralDirectorySize, 12);
+    end.writeUInt32LE(offset, 16);
+    end.writeUInt16LE(0, 20);
+
+    return Buffer.concat([...localParts, ...centralParts, end]);
+  }
+
+  private crc32(buffer: Buffer) {
+    let crc = 0xffffffff;
+
+    for (const byte of buffer) {
+      crc = (crc >>> 8) ^ crc32Table[(crc ^ byte) & 0xff];
+    }
+
+    return (crc ^ 0xffffffff) >>> 0;
   }
 
   private getClient(config: R2Config) {
@@ -207,6 +379,22 @@ export class FilesService {
     }
 
     return this.client;
+  }
+
+  private async getObjectMetadata(config: R2Config, key: string) {
+    try {
+      const response = await this.getClient(config).send(
+        new HeadObjectCommand({
+          Bucket: config.bucket,
+          Key: key,
+        }),
+      );
+
+      return response.Metadata ?? {};
+    } catch (error) {
+      console.log('Error loading file metadata from R2:', error);
+      return {};
+    }
   }
 
   private getConfig(): R2Config {
@@ -239,3 +427,14 @@ export class FilesService {
     return this.config;
   }
 }
+
+const crc32Table = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+
+  for (let bit = 0; bit < 8; bit += 1) {
+    value =
+      value & 1 ? (0xedb88320 ^ (value >>> 1)) >>> 0 : (value >>> 1) >>> 0;
+  }
+
+  return value >>> 0;
+});
